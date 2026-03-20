@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AirStation — Live IoT Dashboard</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --surface2: #1a2235;
+    --border: #1e2d45;
+    --accent: #00d4aa;
+    --accent2: #0ea5e9;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  .grid-bg {
+    position: fixed; inset: 0; z-index: 0;
+    background-image:
+      linear-gradient(rgba(0,212,170,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,170,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+  }
+  .wrap { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+
+  /* HEADER */
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 36px; flex-wrap: wrap; gap: 16px; }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(0,212,170,0.4)} 50%{box-shadow:0 0 0 8px rgba(0,212,170,0)} }
+  .logo h1 { font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: -0.5px; color: var(--text); }
+  .logo span { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: 2px; display: block; margin-top: 1px; }
+  .status-bar { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .status-pill {
+    display: flex; align-items: center; gap: 7px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 6px 14px; font-size: 12px; font-family: var(--mono);
+  }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .status-dot.on { background: var(--accent); animation: pulse 2s infinite; }
+  .status-dot.alert { background: var(--danger); animation: pulse 1s infinite; }
+  .last-update { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+
+  /* ALERT BANNER */
+  .alert-banner {
+    display: none; align-items: center; gap: 12px;
+    background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.4);
+    border-radius: 10px; padding: 14px 18px; margin-bottom: 24px;
+    animation: shake 0.5s ease;
+  }
+  .alert-banner.show { display: flex; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-6px)} 75%{transform:translateX(6px)} }
+  .alert-icon { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); animation: pulse 1s infinite; flex-shrink: 0; }
+  .alert-text { font-size: 13px; font-weight: 500; color: #fca5a5; }
+
+  /* STAT CARDS */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 22px;
+    transition: border-color 0.3s, transform 0.2s;
+    position: relative; overflow: hidden;
+  }
+  .card:hover { transform: translateY(-2px); border-color: #2a3f5f; }
+  .card.danger { border-color: rgba(239,68,68,0.5); background: rgba(239,68,68,0.06); }
+  .card-label { font-size: 11px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; font-weight: 500; margin-bottom: 10px; }
+  .card-value { font-family: var(--mono); font-size: 36px; font-weight: 700; line-height: 1; color: var(--text); }
+  .card-value.accent { color: var(--accent); }
+  .card-value.blue { color: var(--accent2); }
+  .card-value.warn { color: var(--warning); }
+  .card-value.danger { color: var(--danger); }
+  .card-unit { font-size: 14px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+  .card-bar-wrap { margin-top: 14px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .card-bar { height: 100%; border-radius: 2px; transition: width 0.6s ease, background 0.3s; }
+  .card-sub { font-size: 11px; color: var(--muted); margin-top: 8px; font-family: var(--mono); }
+  .card-accent-line { position: absolute; top: 0; left: 0; right: 0; height: 2px; border-radius: 14px 14px 0 0; }
+
+  /* CHARTS */
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  @media(max-width: 680px) { .charts { grid-template-columns: 1fr; } }
+  .chart-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 22px;
+  }
+  .chart-title { font-size: 12px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; font-weight: 500; margin-bottom: 16px; }
+  .chart-wrap { position: relative; height: 160px; }
+
+  /* BOTTOM ROW */
+  .bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width: 680px) { .bottom { grid-template-columns: 1fr; } }
+
+  /* LOG */
+  .log-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 22px;
+  }
+  .log-title { font-size: 12px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; font-weight: 500; margin-bottom: 14px; }
+  .log-entries { display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; }
+  .log-entry { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; font-family: var(--mono); padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .log-time { color: var(--muted); flex-shrink: 0; }
+  .log-msg { color: var(--text); }
+  .log-msg.alert { color: #fca5a5; }
+  .log-msg.ok { color: var(--accent); }
+
+  /* DEVICE INFO */
+  .device-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 22px;
+  }
+  .device-title { font-size: 12px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; font-weight: 500; margin-bottom: 14px; }
+  .device-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .device-row:last-child { border-bottom: none; }
+  .device-key { color: var(--muted); }
+  .device-val { font-family: var(--mono); color: var(--text); font-size: 12px; }
+  .device-val.green { color: var(--accent); }
+  .device-val.blue { color: var(--accent2); }
+
+  /* CONNECTING STATE */
+  .connecting {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 60vh; gap: 20px; text-align: center;
+  }
+  .spinner { width: 40px; height: 40px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .connecting p { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .connecting h2 { font-size: 18px; font-weight: 500; color: var(--text); }
+  .main-content { display: none; }
+  .main-content.show { display: block; }
+  .connecting-wrap { display: block; }
+  .connecting-wrap.hide { display: none; }
+
+  /* scrollbar */
+  .log-entries::-webkit-scrollbar { width: 4px; }
+  .log-entries::-webkit-scrollbar-track { background: transparent; }
+  .log-entries::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="grid-bg"></div>
+<div class="wrap">
+
+  <div class="connecting-wrap" id="connectingWrap">
+    <div class="connecting">
+      <div class="spinner"></div>
+      <h2>Connecting to AirStation</h2>
+      <p id="connectStatus">Initializing MQTT connection...</p>
+    </div>
+  </div>
+
+  <div class="main-content" id="mainContent">
+    <header>
+      <div class="logo">
+        <div class="logo-dot"></div>
+        <div>
+          <h1>AirStation</h1>
+          <span>LIVE IOT MONITOR</span>
+        </div>
+      </div>
+      <div class="status-bar">
+        <div class="status-pill">
+          <div class="status-dot on" id="mqttDot"></div>
+          <span id="mqttStatus">MQTT Connected</span>
+        </div>
+        <div class="status-pill">
+          <div class="status-dot on"></div>
+          <span>broker.hivemq.com</span>
+        </div>
+        <div class="last-update">Last update: <span id="lastUpdate">--:--:--</span></div>
+      </div>
+    </header>
+
+    <div class="alert-banner" id="alertBanner">
+      <div class="alert-icon"></div>
+      <div class="alert-text" id="alertText">GAS / SMOKE DETECTED — Sensor threshold exceeded!</div>
+    </div>
+
+    <div class="cards">
+      <div class="card" id="tempCard">
+        <div class="card-accent-line" style="background: var(--accent2)"></div>
+        <div class="card-label">Temperature</div>
+        <div class="card-value blue" id="tempVal">--<span class="card-unit">°C</span></div>
+        <div class="card-bar-wrap"><div class="card-bar" id="tempBar" style="width:0%; background: var(--accent2)"></div></div>
+        <div class="card-sub" id="tempSub">Waiting for data...</div>
+      </div>
+      <div class="card" id="humCard">
+        <div class="card-accent-line" style="background: var(--accent)"></div>
+        <div class="card-label">Humidity</div>
+        <div class="card-value accent" id="humVal">--<span class="card-unit">%</span></div>
+        <div class="card-bar-wrap"><div class="card-bar" id="humBar" style="width:0%; background: var(--accent)"></div></div>
+        <div class="card-sub" id="humSub">Waiting for data...</div>
+      </div>
+      <div class="card" id="gasCard">
+        <div class="card-accent-line" style="background: var(--accent)"></div>
+        <div class="card-label">Gas / Smoke Level</div>
+        <div class="card-value accent" id="gasVal">--<span class="card-unit">raw</span></div>
+        <div class="card-bar-wrap"><div class="card-bar" id="gasBar" style="width:0%; background: var(--accent)"></div></div>
+        <div class="card-sub" id="gasSub">Waiting for data...</div>
+      </div>
+      <div class="card" id="lightCard">
+        <div class="card-accent-line" style="background: #a78bfa"></div>
+        <div class="card-label">Light Level</div>
+        <div class="card-value" style="color:#a78bfa" id="lightVal">--<span class="card-unit">raw</span></div>
+        <div class="card-bar-wrap"><div class="card-bar" id="lightBar" style="width:0%; background:#a78bfa"></div></div>
+        <div class="card-sub" id="lightSub">Waiting for data...</div>
+      </div>
+    </div>
+
+    <div class="charts">
+      <div class="chart-card">
+        <div class="chart-title">Temperature History</div>
+        <div class="chart-wrap"><canvas id="tempChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Gas Level History</div>
+        <div class="chart-wrap"><canvas id="gasChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div class="log-card">
+        <div class="log-title">Event Log</div>
+        <div class="log-entries" id="logEntries"></div>
+      </div>
+      <div class="device-card">
+        <div class="device-title">Device Info</div>
+        <div class="device-row"><span class="device-key">Device</span><span class="device-val green" id="devName">--</span></div>
+        <div class="device-row"><span class="device-key">Topic</span><span class="device-val blue">dhruv/airstation/data</span></div>
+        <div class="device-row"><span class="device-key">Broker</span><span class="device-val">broker.hivemq.com</span></div>
+        <div class="device-row"><span class="device-key">Protocol</span><span class="device-val">MQTT over WSS</span></div>
+        <div class="device-row"><span class="device-key">Messages</span><span class="device-val green" id="msgCount">0</span></div>
+        <div class="device-row"><span class="device-key">Alert Status</span><span class="device-val green" id="alertStatus">NORMAL</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
+const TOPIC = 'dhruv/airstation/data';
+const ALERT_TOPIC = 'dhruv/airstation/alert';
+
+let msgCount = 0;
+let tempHistory = [];
+let gasHistory = [];
+let timeLabels = [];
+
+const chartOpts = (color) => ({
+  responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#64748b', font: { family: 'Space Mono', size: 9 } } },
+    y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#64748b', font: { family: 'Space Mono', size: 9 } } }
+  },
+  elements: { point: { radius: 2 }, line: { tension: 0.4 } }
+});
+
+const tempCtx = document.getElementById('tempChart').getContext('2d');
+const gasCtx = document.getElementById('gasChart').getContext('2d');
+
+const tempChart = new Chart(tempCtx, {
+  type: 'line',
+  data: { labels: [], datasets: [{ data: [], borderColor: '#0ea5e9', backgroundColor: 'rgba(14,165,233,0.08)', fill: true, borderWidth: 2 }] },
+  options: chartOpts('#0ea5e9')
+});
+
+const gasChart = new Chart(gasCtx, {
+  type: 'line',
+  data: { labels: [], datasets: [{ data: [], borderColor: '#00d4aa', backgroundColor: 'rgba(0,212,170,0.08)', fill: true, borderWidth: 2 }] },
+  options: chartOpts('#00d4aa')
+});
+
+function addLog(msg, type='normal') {
+  const wrap = document.getElementById('logEntries');
+  const now = new Date().toLocaleTimeString();
+  const el = document.createElement('div');
+  el.className = 'log-entry';
+  el.innerHTML = `<span class="log-time">${now}</span><span class="log-msg ${type}">${msg}</span>`;
+  wrap.insertBefore(el, wrap.firstChild);
+  if (wrap.children.length > 30) wrap.removeChild(wrap.lastChild);
+}
+
+function updateCard(id, value, unit, barPct, color, subText) {
+  const valEl = document.getElementById(id + 'Val');
+  const barEl = document.getElementById(id + 'Bar');
+  const subEl = document.getElementById(id + 'Sub');
+  valEl.innerHTML = value + '<span class="card-unit">' + unit + '</span>';
+  barEl.style.width = Math.min(barPct, 100) + '%';
+  barEl.style.background = color;
+  subEl.textContent = subText;
+}
+
+function handleData(data) {
+  msgCount++;
+  document.getElementById('msgCount').textContent = msgCount;
+
+  const now = new Date().toLocaleTimeString();
+  document.getElementById('lastUpdate').textContent = now;
+  document.getElementById('devName').textContent = data.device || 'ESP32-AirStation';
+
+  const temp = parseFloat(data.temperature) || 0;
+  const hum = parseFloat(data.humidity) || 0;
+  const gas = parseInt(data.gas_raw) || 0;
+  const light = parseInt(data.light_raw) || 0;
+  const alert = data.gas_alert;
+
+  const tempColor = temp > 35 ? '#ef4444' : temp > 28 ? '#f59e0b' : '#0ea5e9';
+  updateCard('temp', temp.toFixed(1), '°C', (temp / 50) * 100, tempColor,
+    temp > 35 ? 'High temp warning' : temp < 15 ? 'Low temperature' : 'Normal range');
+
+  const humColor = hum < 30 ? '#f59e0b' : hum > 80 ? '#0ea5e9' : '#00d4aa';
+  updateCard('hum', hum.toFixed(1), '%', hum, humColor,
+    hum < 30 ? 'Too dry' : hum > 80 ? 'Too humid' : 'Comfortable');
+
+  const gasColor = gas > 2000 ? '#ef4444' : gas > 1000 ? '#f59e0b' : '#00d4aa';
+  updateCard('gas', gas, 'raw', (gas / 4095) * 100, gasColor,
+    gas > 2000 ? 'DANGER: High gas level!' : gas > 1000 ? 'Elevated — monitor closely' : 'Air quality normal');
+
+  if (gas > 2000) {
+    document.getElementById('gasCard').classList.add('danger');
+  } else {
+    document.getElementById('gasCard').classList.remove('danger');
+  }
+
+  updateCard('light', light, 'raw', (light / 4095) * 100, '#a78bfa',
+    light < 500 ? 'Dark / Night' : light > 3000 ? 'Bright light' : 'Normal ambient');
+
+  if (alert) {
+    document.getElementById('alertBanner').classList.add('show');
+    document.getElementById('alertText').textContent = `GAS / SMOKE DETECTED — Raw value: ${gas} (threshold exceeded!)`;
+    document.getElementById('alertStatus').textContent = 'ALERT';
+    document.getElementById('alertStatus').style.color = '#ef4444';
+    document.getElementById('mqttDot').classList.add('alert');
+    addLog(`GAS ALERT triggered — gas_raw: ${gas}`, 'alert');
+  } else {
+    document.getElementById('alertBanner').classList.remove('show');
+    document.getElementById('alertStatus').textContent = 'NORMAL';
+    document.getElementById('alertStatus').style.color = 'var(--accent)';
+    document.getElementById('mqttDot').classList.remove('alert');
+  }
+
+  const label = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  if (timeLabels.length > 20) { timeLabels.shift(); tempHistory.shift(); gasHistory.shift(); }
+  timeLabels.push(label);
+  tempHistory.push(temp);
+  gasHistory.push(gas);
+
+  tempChart.data.labels = [...timeLabels];
+  tempChart.data.datasets[0].data = [...tempHistory];
+  tempChart.update('none');
+
+  gasChart.data.labels = [...timeLabels];
+  gasChart.data.datasets[0].data = [...gasHistory];
+  gasChart.data.datasets[0].borderColor = gas > 2000 ? '#ef4444' : '#00d4aa';
+  gasChart.update('none');
+
+  addLog(`Data received — Temp: ${temp.toFixed(1)}°C | Hum: ${hum.toFixed(1)}% | Gas: ${gas}`, 'ok');
+}
+
+document.getElementById('connectStatus').textContent = 'Connecting to broker.hivemq.com...';
+
+const client = mqtt.connect(BROKER, {
+  clientId: 'AirStationDash_' + Math.random().toString(16).substr(2, 8),
+  clean: true,
+  reconnectPeriod: 3000
+});
+
+client.on('connect', () => {
+  document.getElementById('connectingWrap').classList.add('hide');
+  document.getElementById('mainContent').classList.add('show');
+  client.subscribe(TOPIC);
+  client.subscribe(ALERT_TOPIC);
+  addLog('Connected to HiveMQ broker', 'ok');
+  addLog('Subscribed to dhruv/airstation/data', 'ok');
+  document.getElementById('mqttStatus').textContent = 'MQTT Connected';
+});
+
+client.on('error', (err) => {
+  document.getElementById('connectStatus').textContent = 'Connection error — retrying...';
+  console.error(err);
+});
+
+client.on('offline', () => {
+  document.getElementById('mqttDot').classList.remove('on');
+  document.getElementById('mqttStatus').textContent = 'Reconnecting...';
+});
+
+client.on('reconnect', () => {
+  document.getElementById('connectStatus').textContent = 'Reconnecting to broker...';
+});
+
+client.on('message', (topic, message) => {
+  try {
+    const data = JSON.parse(message.toString());
+    handleData(data);
+  } catch(e) {
+    addLog('Parse error: ' + message.toString(), 'alert');
+  }
+});
+</script>
+</body>
+</html>
