@@ -3,6 +3,9 @@
 ## Live Dashboard
 https://dhruvjain1583-dev.github.io/airstation-iot-dashboard
 
+<img width="1151" height="890" alt="dashboard_screenshot" src="https://github.com/user-attachments/assets/4c40c5cf-d3ba-4f41-81c4-520940c10afc" />
+
+
 ## Wokwi Simulation
 
 https://wokwi.com/projects/459033289778557953
